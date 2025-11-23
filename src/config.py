@@ -17,7 +17,21 @@ if env_folder.exists():
 class Config:
     """Bot Configuration"""
 
-    PORT = 3978
+    # Port cho bot Teams (mặc định 3978)
+    # Lưu ý: Port 8386 là port của backend API, không phải port của bot
+    _port_env = os.environ.get("PORT", "3978")
+    PORT = int(_port_env)
+    
+    # Cảnh báo nếu port được set là 8386 (port của backend)
+    if PORT == 8386:
+        import warnings
+        warnings.warn(
+            "⚠️ PORT=8386 là port của backend API, không phải port của bot Teams! "
+            "Bot Teams nên chạy trên port 3978. "
+            "Nếu bạn muốn thay đổi port của bot, hãy set PORT environment variable sang port khác (ví dụ: 3978)."
+        )
+        # Tự động sửa về 3978 nếu phát hiện port 8386
+        PORT = 3978
     APP_ID = os.environ.get("CLIENT_ID", "")
     APP_PASSWORD = os.environ.get("CLIENT_SECRET", "")
     APP_TYPE = os.environ.get("BOT_TYPE", "")

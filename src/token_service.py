@@ -1,12 +1,12 @@
 """
 Service để xử lý Teams token và gửi xuống backend
+DEPRECATED: Sử dụng backend_service.send_teams_token_to_backend() thay thế
+Giữ lại để backward compatibility
 """
-import httpx
 import logging
 from typing import Optional, Dict, Any
-from config import Config
+from backend_service import send_teams_token_to_backend
 
-config = Config()
 logger = logging.getLogger(__name__)
 
 async def send_token_to_backend(
@@ -18,6 +18,8 @@ async def send_token_to_backend(
     """
     Gửi Teams token xuống backend để xử lý authentication và tích hợp Graph API
     
+    DEPRECATED: Sử dụng backend_service.send_teams_token_to_backend() thay thế
+    
     Args:
         user_id: ID của user trong Teams
         token: Access token từ Teams SSO
@@ -27,34 +29,11 @@ async def send_token_to_backend(
     Returns:
         Response từ backend
     """
-    if not config.BACKEND_URL:
-        logger.warning("BACKEND_URL chưa được cấu hình, không thể gửi token xuống backend")
-        return {"error": "Backend URL not configured"}
-    
-    endpoint = f"{config.BACKEND_URL.rstrip('/')}{config.BACKEND_AUTH_ENDPOINT}"
-    
-    payload = {
-        "teams_token": token,
-        "user_id": user_id,
-        "tenant_id": tenant_id or config.APP_TENANTID,
-    }
-    
-    if additional_data:
-        payload.update(additional_data)
-    
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                endpoint,
-                json=payload,
-                headers={"Content-Type": "application/json"}
-            )
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPError as e:
-        logger.error(f"Lỗi khi gửi token xuống backend: {e}")
-        return {"error": str(e)}
-    except Exception as e:
-        logger.error(f"Lỗi không mong đợi: {e}")
-        return {"error": str(e)}
+    logger.warning("send_token_to_backend() is deprecated, use backend_service.send_teams_token_to_backend() instead")
+    return await send_teams_token_to_backend(
+        user_id=user_id,
+        token=token,
+        tenant_id=tenant_id,
+        additional_data=additional_data
+    )
 

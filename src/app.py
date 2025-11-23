@@ -10,7 +10,12 @@ from microsoft.teams.openai import OpenAICompletionsAIModel
 from microsoft.teams.api import MessageActivity, MessageActivityInput, MessageSubmitActionInvokeActivity, InvokeActivity
 
 from config import Config
-from token_service import send_token_to_backend
+from backend_service import (
+    call_backend_hr_api,
+    send_teams_token_to_backend,
+    BackendServiceError,
+    AuthenticationError
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -78,6 +83,79 @@ def get_or_create_conversation_memory(conversation_id: str) -> ListMemory:
         conversation_store[conversation_id] = ListMemory()
     return conversation_store[conversation_id]
 
+async def handle_hr_query_with_backend(ctx: ActivityContext[MessageActivity]) -> None:
+    """
+    Handle HR query bằng cách gọi Backend API
+    """
+    try:
+        user_id = ctx.activity.from_property.id if ctx.activity.from_property else None
+        if not user_id:
+            await ctx.send(MessageActivityInput(
+                text="❌ Không thể xác định user. Vui lòng authenticate bằng cách gõ 'auth'"
+            ))
+            return
+        
+        # Lấy Teams token
+        token_result = await app.get_user_token(
+            ctx,
+            config.APP_ID,
+            "User.Read"
+        )
+        
+        if not token_result or not token_result.token:
+            # Chưa authenticate → yêu cầu user authenticate
+            await ctx.send(MessageActivityInput(
+                text="🔐 Bạn cần xác thực trước. Vui lòng gõ 'auth' hoặc 'đăng nhập' để xác thực."
+            ))
+            return
+        
+        # Gọi Backend HR API
+        conversation_id = ctx.activity.conversation.id if ctx.activity.conversation else None
+        
+        logger.info(
+            f"Gọi Backend HR API",
+            query=ctx.activity.text[:100],
+            user_id=user_id,
+            conversation_id=conversation_id
+        )
+        
+        backend_response = await call_backend_hr_api(
+            query=ctx.activity.text,
+            teams_token=token_result.token,
+            user_id=user_id,
+            conversation_id=conversation_id
+        )
+        
+        # Trả về response cho user
+        answer = backend_response.get("answer", "Xin lỗi, tôi không thể trả lời câu hỏi này.")
+        
+        # Format response với sources nếu có
+        sources = backend_response.get("sources", [])
+        if sources and len(sources) > 0:
+            answer += "\n\n📚 Nguồn tham khảo:"
+            for i, source in enumerate(sources[:3], 1):  # Chỉ hiển thị 3 sources đầu
+                doc_title = source.get("document_title", "Document")
+                answer += f"\n{i}. {doc_title}"
+        
+        await ctx.send(MessageActivityInput(text=answer))
+        
+    except AuthenticationError as e:
+        logger.warning(f"Authentication error: {e}")
+        await ctx.send(MessageActivityInput(
+            text=f"🔐 {str(e)}"
+        ))
+    except BackendServiceError as e:
+        logger.error(f"Backend service error: {e}")
+        await ctx.send(MessageActivityInput(
+            text=f"⚠️ {str(e)}"
+        ))
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        await ctx.send(MessageActivityInput(
+            text="❌ Đã có lỗi xảy ra. Vui lòng thử lại sau hoặc liên hệ admin."
+        ))
+
+
 async def handle_stateful_conversation(model: AIModel, ctx: ActivityContext[MessageActivity]) -> None:
     """Example of stateful conversation handler that maintains conversation history"""
     # Retrieve existing conversation memory or initialize new one
@@ -139,7 +217,7 @@ async def handle_sso_verify_state(ctx: ActivityContext[InvokeActivity]):
             logger.info(f"Đã lấy token thành công cho user: {user_id}")
             
             # Gửi token xuống backend
-            backend_response = await send_token_to_backend(
+            backend_response = await send_teams_token_to_backend(
                 user_id=user_id,
                 token=token_result.token,
                 tenant_id=config.APP_TENANTID,
@@ -203,7 +281,7 @@ async def handle_sso_token_exchange(ctx: ActivityContext[InvokeActivity]):
             logger.info(f"Token exchange thành công cho user: {user_id}")
             
             # Gửi token xuống backend
-            backend_response = await send_token_to_backend(
+            backend_response = await send_teams_token_to_backend(
                 user_id=user_id,
                 token=token_result.token,
                 tenant_id=config.APP_TENANTID,
@@ -257,7 +335,7 @@ async def handle_message(ctx: ActivityContext[MessageActivity]):
                 
                 if token_result and token_result.token:
                     # Gửi token xuống backend
-                    backend_response = await send_token_to_backend(
+                    backend_response = await send_teams_token_to_backend(
                         user_id=user_id,
                         token=token_result.token,
                         tenant_id=config.APP_TENANTID,
@@ -267,8 +345,10 @@ async def handle_message(ctx: ActivityContext[MessageActivity]):
                     )
                     
                     if "error" not in backend_response:
+                        user_info = backend_response.get("user", {})
+                        user_name = user_info.get("full_name", user_info.get("email", "User"))
                         await ctx.send(MessageActivityInput(
-                            text="✅ Đã xác thực thành công và gửi token xuống backend!"
+                            text=f"✅ Đã xác thực thành công!\n\nXin chào {user_name}! Bạn có thể hỏi tôi về HR policies, leave policies, benefits, và nhiều hơn nữa."
                         ))
                     else:
                         await ctx.send(MessageActivityInput(
@@ -289,8 +369,21 @@ async def handle_message(ctx: ActivityContext[MessageActivity]):
                 text=f"❌ Lỗi: {str(e)}"
             ))
     else:
-        # Xử lý message bình thường
-        await handle_stateful_conversation(model, ctx)
+        # Xử lý message bình thường - gọi Backend HR API
+        await handle_hr_query_with_backend(ctx)
 
 if __name__ == "__main__":
+    # Đảm bảo PORT environment variable được set đúng (3978 cho bot, không phải 8386 cho backend)
+    # Microsoft Teams SDK có thể đọc PORT từ environment variable trực tiếp
+    if os.environ.get("PORT") == "8386":
+        logger.warning("⚠️ Phát hiện PORT=8386 trong environment variable!")
+        logger.warning("⚠️ Port 8386 là port của backend API, không phải port của bot Teams!")
+        logger.info("🔄 Đang set PORT=3978 (port mặc định cho Teams bot)...")
+        os.environ["PORT"] = "3978"
+    
+    # Log port configuration
+    logger.info(f"🚀 Đang khởi động Teams Bot trên port {config.PORT}")
+    logger.info(f"📍 Backend URL: {config.BACKEND_URL}")
+    logger.info(f"💡 Lưu ý: Bot Teams chạy trên port {config.PORT}, Backend API chạy trên port khác (8386)")
+    
     asyncio.run(app.start())

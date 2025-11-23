@@ -68,6 +68,55 @@ To extend the Basic AI Chatbot template with more AI capabilities, explore [Micr
 - [Microsoft 365 Agents Toolkit CLI](https://aka.ms/teamsfx-toolkit-cli)
 - [Microsoft 365 Agents Toolkit Samples](https://github.com/OfficeDev/TeamsFx-Samples)
 
+## Testing Bot
+
+### ✅ Cách Test Đúng (Khuyến nghị)
+
+**1. Sử dụng Microsoft 365 Agents Toolkit (Dễ nhất)**
+- Press **F5** trong VS Code
+- Chọn **"Debug in Teams (Edge)"** hoặc **"Debug in Teams (Chrome)"**
+- Teams sẽ tự động mở với authentication hợp lệ
+- ✅ Không cần config thêm gì
+
+**2. Sử dụng Bot Framework Emulator**
+- Download: https://github.com/Microsoft/BotFramework-Emulator/releases
+- Connect đến `http://localhost:3978/api/messages`
+- Emulator tự động xử lý authentication
+
+### ⚠️ Lưu ý về Authentication
+
+Bot Teams **yêu cầu JWT token từ Microsoft Teams service** để xác thực. Khi test bằng `curl` không có token hợp lệ, bạn sẽ gặp lỗi:
+
+```
+Unauthorized request - missing or invalid authorization header
+```
+
+**Đây là hành vi bảo mật bình thường**, không phải bug!
+
+**JWT token phải:**
+- Được generate bởi Microsoft Teams service
+- Có claims hợp lệ (issuer, audience, expiration)
+- Được verify bởi Bot Framework SDK
+
+**Không thể:**
+- ❌ Fake JWT token
+- ❌ Bypass authentication trong production
+- ❌ Test bằng curl đơn giản mà không có token hợp lệ
+
+### 🔧 Cấu hình cần thiết
+
+Đảm bảo đã config trong `env/.env.local` hoặc `env/.env.local.user`:
+
+```env
+CLIENT_ID=<your-bot-app-id>          # Bot App ID từ Azure Portal
+CLIENT_SECRET=<your-bot-app-password> # Bot App Password/Secret
+TENANT_ID=<your-tenant-id>            # Azure AD Tenant ID
+```
+
+Những giá trị này được tạo khi:
+- Register bot trong Azure Portal
+- Hoặc sử dụng Teams Toolkit để provision
+
 ## Known issue
 - If you use `Debug in Microsoft 365 Agents Playground` to local debug, you might get an error `InternalServiceError: connect ECONNREFUSED 127.0.0.1:3978` in Microsoft 365 Agents Playground console log or error message `Error: Cannot connect to your app,
 please make sure your app is running or restart your app` in log panel of Microsoft 365 Agents Playground web page. You can wait for Python launch console ready and then refresh the front end web page.
